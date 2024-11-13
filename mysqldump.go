@@ -16,6 +16,7 @@ import (
 type Config struct {
 	Timeout time.Duration
 	Logger  *log.Logger
+	OnArgs  func(args []string) []string
 }
 
 func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
@@ -48,22 +49,30 @@ func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
 		}
 	}
 
+	args := []string{
+		"--host",
+		host,
+		"--port",
+		port,
+		"--user",
+		config.DSNConfig.User,
+		fmt.Sprintf("--password=%s", config.DSNConfig.Passwd),
+		"--databases",
+		config.DSNConfig.DBName,
+		"--result-file",
+		file.Name(),
+	}
+
+	if cfg.OnArgs != nil {
+		args = cfg.OnArgs(args)
+	}
+
 	// apk add mariadb-client
 	// brew install mysql-client, export PATH="$PATH:/usr/local/opt/mysql-client/bin"
 	cmd := exec.CommandContext(
 		timeoutCtx,
 		"mysqldump",
-		"--user",
-		config.DSNConfig.User,
-		fmt.Sprintf("--password=%s", config.DSNConfig.Passwd),
-		"--host",
-		host,
-		"--port",
-		port,
-		"--databases",
-		config.DSNConfig.DBName,
-		"--result-file",
-		file.Name(),
+		args...,
 	)
 
 	output, err := cmd.CombinedOutput()
