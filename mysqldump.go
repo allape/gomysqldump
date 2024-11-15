@@ -3,6 +3,7 @@ package gomysqldump
 import (
 	"context"
 	"fmt"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"io"
@@ -19,7 +20,7 @@ type Config struct {
 	OnArgs  func(args []string) []string
 }
 
-func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
+func MySQLDump(writer io.Writer, dsn *mysqldriver.Config, cfg *Config) (int64, error) {
 	if cfg == nil {
 		cfg = &Config{}
 	}
@@ -34,20 +35,27 @@ func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
 
 	var err error
 
-	config := db.Config.Dialector.(*mysql.Dialector).Config
-
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	host := "127.0.0.1"
 	port := "3306"
-	addr := config.DSNConfig.Addr
+	addr := dsn.Addr
 	if addr != "" {
 		host, port, err = net.SplitHostPort(addr)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
+
+	file, err := os.CreateTemp(os.TempDir(), "dump-*.sql")
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+	}()
 
 	args := []string{
 		"--host",
@@ -55,10 +63,10 @@ func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
 		"--port",
 		port,
 		"--user",
-		config.DSNConfig.User,
-		fmt.Sprintf("--password=%s", config.DSNConfig.Passwd),
+		dsn.User,
+		fmt.Sprintf("--password=%s", dsn.Passwd),
 		"--databases",
-		config.DSNConfig.DBName,
+		dsn.DBName,
 		"--result-file",
 		file.Name(),
 	}
@@ -80,8 +88,29 @@ func MySQLDump(file *os.File, db *gorm.DB, cfg *Config) error {
 	cfg.Logger.Println(string(output))
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return nil
+	_, err = file.Seek(0, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+
+	return io.Copy(writer, file)
+}
+
+func MySQLDumpFromDSNString(writer io.Writer, dsnStr string, cfg *Config) (int64, error) {
+	dsn, err := mysqldriver.ParseDSN(dsnStr)
+	if err != nil {
+		return 0, err
+	}
+	return MySQLDump(writer, dsn, cfg)
+}
+
+func MySQLDumpFromDialector(writer io.Writer, dialector *mysql.Dialector, cfg *Config) (int64, error) {
+	return MySQLDump(writer, dialector.DSNConfig, cfg)
+}
+
+func MySQLDumpFromGORM(writer io.Writer, db *gorm.DB, cfg *Config) (int64, error) {
+	return MySQLDumpFromDialector(writer, db.Config.Dialector.(*mysql.Dialector), cfg)
 }
