@@ -75,8 +75,6 @@ func MySQLDump(writer io.Writer, dsn *mysqldriver.Config, cfg *Config) (int64, e
 		args = cfg.OnArgs(args)
 	}
 
-	// apk add mariadb-client
-	// brew install mysql-client, export PATH="$PATH:/usr/local/opt/mysql-client/bin"
 	cmd := exec.CommandContext(
 		timeoutCtx,
 		"mysqldump",
